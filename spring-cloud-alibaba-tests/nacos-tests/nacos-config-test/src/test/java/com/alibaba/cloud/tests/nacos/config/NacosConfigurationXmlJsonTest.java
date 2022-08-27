@@ -16,13 +16,18 @@
 
 package com.alibaba.cloud.tests.nacos.config;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 import com.alibaba.cloud.nacos.NacosConfigAutoConfiguration;
 import com.alibaba.cloud.nacos.NacosConfigBootstrapConfiguration;
 import com.alibaba.cloud.nacos.NacosConfigManager;
 import com.alibaba.cloud.nacos.NacosConfigProperties;
+import com.alibaba.cloud.nacos.endpoint.NacosConfigEndpoint;
 import com.alibaba.cloud.nacos.endpoint.NacosConfigEndpointAutoConfiguration;
+import com.alibaba.cloud.nacos.refresh.NacosRefreshHistory;
 import com.alibaba.cloud.testsupport.SpringCloudAlibaba;
 import com.alibaba.cloud.testsupport.TestExtend;
 import com.alibaba.nacos.api.PropertyKeyConst;
@@ -46,15 +51,26 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 
 @SpringCloudAlibaba(composeFiles = "docker/nacos-compose-test.yml", serviceName = "nacos-standalone")
 @TestExtend(time = 4 * TIME_OUT)
-@SpringBootTest(classes = NacosFileExtensionTest.TestConfig.class, webEnvironment = NONE, properties = {
-		"spring.application.name=test-name",
+@SpringBootTest(classes = NacosConfigurationXmlJsonTest.TestConfig.class, webEnvironment = NONE, properties = {
+		"spring.application.name=xmlapp",
+		"spring.profiles.active=dev",
 		"spring.cloud.nacos.config.server-addr=127.0.0.1:8848",
 		"spring.cloud.nacos.config.username=nacos",
 		"spring.cloud.nacos.config.password=nacos",
-		"spring.cloud.nacos.config.file-extension=yml",
+		"spring.cloud.nacos.config.namespace=test-namespace",
+		"spring.cloud.nacos.config.group=test-group",
+		"spring.cloud.nacos.config.name=test-name",
+		"spring.cloud.nacos.config.cluster-name=test-cluster",
+		"spring.cloud.nacos.config.file-extension=xml",
+		"spring.cloud.nacos.config.encode=utf-8",
+		"spring.cloud.nacos.config.timeout=1000",
+		"spring.cloud.nacos.config.extension-configs[0].data-id=ext-config-common01.properties",
+		"spring.cloud.nacos.config.extension-configs[1].data-id=ext-config-common02.properties",
+		"spring.cloud.nacos.config.extension-configs[1].group=GLOBAL_GROUP",
+		"spring.cloud.nacos.config.shared-dataids=common1.properties,common2.properties",
 		"spring.cloud.bootstrap.enabled=true"})
 
-public class NacosFileExtensionTest {
+public class NacosConfigurationXmlJsonTest {
 
 	/**
 	 * nacos upload conf file.
@@ -68,6 +84,9 @@ public class NacosFileExtensionTest {
 
 	@Autowired
 	private NacosConfigProperties nacosConfigProperties;
+
+	@Autowired
+	private NacosRefreshHistory refreshHistory;
 
 	private ConfigService remoteService;
 
@@ -99,10 +118,26 @@ public class NacosFileExtensionTest {
 		String remoteContent = fetchConfig(remoteService, "nacos-config-refresh.yml",
 				"DEFAULT_GROUP", TIME_OUT);
 		Assertions.assertEquals(localContent, remoteContent);
+		List<NacosConfigProperties.Config> mockConfig = mockExtConfigs();
+		List<NacosConfigProperties.Config> extConfig = nacosConfigProperties
+				.getExtensionConfigs();
+		Assertions.assertArrayEquals(extConfig.toArray(), mockConfig.toArray());
 
 		assertThat(nacosConfigProperties.getServerAddr()).isEqualTo("127.0.0.1:8848");
-		assertThat(nacosConfigProperties.getFileExtension()).isEqualTo("yml");
+		assertThat(nacosConfigProperties.getFileExtension()).isEqualTo("xml");
+		assertThat(nacosConfigProperties.getNamespace()).isEqualTo("test-namespace");
+		assertThat(nacosConfigProperties.getClusterName()).isEqualTo("test-cluster");
+		assertThat(nacosConfigProperties.getAccessKey()).isEqualTo("test-accessKey");
+		assertThat(nacosConfigProperties.getSecretKey()).isEqualTo("test-secretKey");
+		assertThat(nacosConfigProperties.getTimeout()).isEqualTo(1000);
+		assertThat(nacosConfigProperties.getEncode()).isEqualTo("utf-8");
 		assertThat(nacosConfigProperties.getUsername()).isEqualTo("nacos");
+		assertThat(nacosConfigProperties.getSharedConfigs() != null);
+		assertThat(nacosConfigProperties.getSharedConfigs()).contains(
+				new NacosConfigProperties.Config("common1.properties"),
+				new NacosConfigProperties.Config("common2.properties"));
+
+		checkoutEndpoint();
 
 	}
 
@@ -112,7 +147,30 @@ public class NacosFileExtensionTest {
 
 	private void updateConfig() throws NacosException {
 		remoteService.publishConfig("nacos-config-refresh.yml", "DEFAULT_GROUP",
-				YAML_CONTENT, "yml");
+				YAML_CONTENT, "yaml");
+	}
+
+	private void checkoutEndpoint() throws NacosException {
+		NacosConfigEndpoint nacosConfigEndpoint = new NacosConfigEndpoint(nacosConfigProperties,
+				refreshHistory);
+		Map<String, Object> map = nacosConfigEndpoint.invoke();
+		assertThat(nacosConfigProperties).isEqualTo(map.get("NacosConfigProperties"));
+		assertThat(refreshHistory.getRecords()).isEqualTo(map.get("RefreshHistory"));
+	}
+
+	public static List<NacosConfigProperties.Config> mockExtConfigs() {
+		List<NacosConfigProperties.Config> mockConfig = new ArrayList<>();
+		NacosConfigProperties.Config config1 = new NacosConfigProperties.Config();
+		config1.setDataId("ext-config-common01.properties");
+		config1.setGroup("DEFAULT_GROUP");
+		config1.setRefresh(false);
+		NacosConfigProperties.Config config2 = new NacosConfigProperties.Config();
+		config2.setDataId("ext-config-common02.properties");
+		config2.setGroup("GLOBAL_GROUP");
+		config2.setRefresh(false);
+		mockConfig.add(config1);
+		mockConfig.add(config2);
+		return mockConfig;
 	}
 
 	@Configuration
